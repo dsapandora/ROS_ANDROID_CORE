@@ -25,11 +25,22 @@ import android.widget.Button;
 //import com.wowwee.bluetoothrobotcontrolpubliclib.MipRobot;
 //import com.wowwee.bluetoothrobotcontrolpubliclib.MipRobotFinder;
 import com.orbotix.ConvenienceRobot;
+import com.orbotix.DualStackDiscoveryAgent;
+import com.orbotix.async.AsyncMessage;
+import com.orbotix.async.DeviceSensorAsyncMessage;
+import com.orbotix.common.DiscoveryException;
+import com.orbotix.common.ResponseListener;
+import com.orbotix.common.Robot;
+import com.orbotix.common.RobotChangedStateListener;
+import com.orbotix.common.sensor.DeviceSensorsData;
+import com.orbotix.common.sensor.SensorFlag;
+import com.orbotix.response.DeviceResponse;
+import com.orbotix.subsystem.SensorControl;
 import com.wowwee.bluetoothrobotcontrollib.sdk.MipRobot;
 import com.wowwee.bluetoothrobotcontrollib.sdk.MipRobotFinder;
 import com.wowwee.mipsample.JoystickData.TYPE;
 
-public class DriveViewFragment extends Fragment implements OnTouchListener{
+public class DriveViewFragment extends Fragment implements OnTouchListener, RobotChangedStateListener, ResponseListener {
 	protected SurfaceView touchArea;
 	
 	protected JoystickData leftJoystickData;
@@ -59,7 +70,13 @@ public class DriveViewFragment extends Fragment implements OnTouchListener{
 	protected boolean driveEnabled = true;
 	
 	protected Rect viewRect;
-	
+
+	//ROBOT
+	private static final int REQUEST_CODE_LOCATION_PERMISSION = 42;
+
+	private DualStackDiscoveryAgent mDiscoveryAgent;
+	private ConvenienceRobot mRobot;
+
 	public DriveViewFragment() {
 		super();
 		leftJoystickDrawableId = R.drawable.img_joystick_left;
@@ -67,7 +84,7 @@ public class DriveViewFragment extends Fragment implements OnTouchListener{
 		rightJoystickDrawableId = R.drawable.img_joystick_right;
 		outerRingDrawableId = R.drawable.img_joystick_outer_ring;
 	}
-	
+
 	protected void setJoystickMode(kDriveMode driveMode) {
 		if(this.driveMode != driveMode) {
 			this.driveMode = driveMode;
@@ -82,7 +99,7 @@ public class DriveViewFragment extends Fragment implements OnTouchListener{
 			leftJoystickDrawer.setJoystickBitmap(leftBitmap);
 		}
 	}
-	
+
 	protected void setDriveEnabled(boolean driveEnabled) {
 		this.driveEnabled = driveEnabled;
 		if(!driveEnabled) {
@@ -90,11 +107,11 @@ public class DriveViewFragment extends Fragment implements OnTouchListener{
 			movementVector[1] = 0;
 		}
 	}
-	
+
 	@Override
 	public void onDestroyView() {
 		super.onDestroyView();
-		
+
 		if(leftJoystickDrawer != null) {
 			leftJoystickDrawer.destroy();
 			leftJoystickDrawer = null;
@@ -115,9 +132,10 @@ public class DriveViewFragment extends Fragment implements OnTouchListener{
 			joystickTimer = null;
 		}
 		isJoystickTimerRunning = false;
-		
+		mDiscoveryAgent.addRobotStateListener(null);
+
 	}
-	
+
 	@Override
 	public void onPause()
 	{
@@ -127,7 +145,7 @@ public class DriveViewFragment extends Fragment implements OnTouchListener{
 		joystickTimer = null;
 		isJoystickTimerRunning = false;
 	}
-	
+
 	@Override
 	public void onResume()
 	{
@@ -137,22 +155,24 @@ public class DriveViewFragment extends Fragment implements OnTouchListener{
 			joystickTimer.schedule(new JoystickTimerCallback(), 50, 50);
 			isJoystickTimerRunning = true;
 		}
-		
+
 		setDriveEnabled(true);
+		startDiscovery();
 	}
-	
+
+
 	@Override
 	public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
 		if (container == null)
 			return null;
-		
+
 		Log.i(DriveViewFragment.class.getName(), "onCreateView start");
-		
+
 		View view = inflater.inflate(R.layout.drive_view, container, false);
-		
+
 		Button backBtn = (Button)view.findViewById(R.id.back_btn);
 		backBtn.setOnClickListener(new View.OnClickListener() {
-			
+
 			@Override
 			public void onClick(View arg0) {
 				DriveViewFragment.this.getFragmentManager().popBackStack();
@@ -161,10 +181,10 @@ public class DriveViewFragment extends Fragment implements OnTouchListener{
 				transaction.commit();
 			}
 		});
-		
+
 		viewRect = new Rect();
 		getActivity().getWindowManager().getDefaultDisplay().getRectSize(viewRect);
-		
+
 		//handle the touch area
 		touchArea = (SurfaceView)view.findViewById(R.id.view_id_touch_area);
 		touchArea.setZOrderOnTop(true);
@@ -205,8 +225,23 @@ public class DriveViewFragment extends Fragment implements OnTouchListener{
 		joystickTimer = new Timer();
 		joystickTimer.schedule(new JoystickTimerCallback(), 50, 50);
 		isJoystickTimerRunning = true;
-		
+
+		//Sphero Robot
+		mDiscoveryAgent = new DualStackDiscoveryAgent();
+		mDiscoveryAgent.addRobotStateListener(this);
+		startDiscovery();
 		return view;
+	}
+
+	private void startDiscovery() {
+		//If the DiscoveryAgent is not already looking for robots, start discovery.
+		if (!mDiscoveryAgent.isDiscovering()) {
+			try {
+				mDiscoveryAgent.startDiscovery(this.getActivity().getBaseContext());
+			} catch (DiscoveryException e) {
+				Log.e("Sphero", "DiscoveryException: " + e.getMessage());
+			}
+		}
 	}
 	
 	@Override
@@ -335,7 +370,63 @@ public class DriveViewFragment extends Fragment implements OnTouchListener{
 	{
 		
 	}
-	
+
+	@Override
+	public void handleRobotChangedState(Robot robot, RobotChangedStateNotificationType type) {
+		switch (type) {
+			case Online: {
+				SensorFlag sensorFlag = new SensorFlag(SensorFlag.SENSOR_FLAG_QUATERNION
+						, SensorFlag.SENSOR_FLAG_ACCELEROMETER_NORMALIZED
+						, SensorFlag.SENSOR_FLAG_GYRO_NORMALIZED
+						, SensorFlag.SENSOR_FLAG_MOTOR_BACKEMF_NORMALIZED
+						, SensorFlag.SENSOR_FLAG_ATTITUDE);
+
+				//Save the robot as a ConvenienceRobot for additional utility methods
+				mRobot = new ConvenienceRobot(robot);
+
+				//Remove stabilization so the robot can be turned in all directions without correcting itself
+				mRobot.enableStabilization(false);
+
+				//Enable sensors based on the flag defined above, and stream their data ten times a second to the mobile device
+				mRobot.enableSensors(sensorFlag, SensorControl.StreamingRate.STREAMING_RATE10);
+
+				//Listen to data responses from the robot
+				mRobot.addResponseListener(this);
+
+				break;
+			}
+		}
+
+	}
+
+	@Override
+	public void handleResponse(DeviceResponse deviceResponse, Robot robot) {
+	}
+
+	@Override
+	public void handleStringResponse(String s, Robot robot) {
+
+	}
+
+	@Override
+	public void handleAsyncMessage(AsyncMessage asyncMessage, Robot robot) {
+		if (asyncMessage == null)
+			return;
+
+		//Check the asyncMessage type to see if it is a DeviceSensor message
+		if (asyncMessage instanceof DeviceSensorAsyncMessage) {
+			DeviceSensorAsyncMessage message = (DeviceSensorAsyncMessage) asyncMessage;
+
+			if (message.getSensorDataFrames() == null
+					|| message.getSensorDataFrames().isEmpty()
+					|| message.getSensorDataFrames().get(0) == null)
+				return;
+
+			//Retrieve DeviceSensorsData from the async message
+			DeviceSensorsData data = message.getSensorDataFrames().get(0);
+		}
+	}
+
 	class JoystickTimerCallback extends TimerTask {
 		  public void run() {
 			  if(moveMip && (movementVector[0] != 0 || movementVector[1] != 0)) {
@@ -344,12 +435,31 @@ public class DriveViewFragment extends Fragment implements OnTouchListener{
 			  }
 		  }
 	}
-	
+
+
+	@Override
+	public void onStop() {
+		//If the DiscoveryAgent is in discovery mode, stop it.
+		if (mDiscoveryAgent.isDiscovering()) {
+			mDiscoveryAgent.stopDiscovery();
+		}
+
+		//If a robot is connected to the device, disconnect it
+		if (mRobot != null) {
+			mRobot.disconnect();
+			mRobot = null;
+		}
+
+		super.onStop();
+	}
+
 	public void mipDrive(float[] vector) {
 		List<MipRobot> mips = MipRobotFinder.getInstance().getMipsConnected();
 		for (MipRobot mip : mips) {
 			mip.mipDrive(vector);
 		}
+		if(mRobot != null)
+		    mRobot.drive(vector[0], vector[1]);
 	}
 	
 	public enum kDriveMode {

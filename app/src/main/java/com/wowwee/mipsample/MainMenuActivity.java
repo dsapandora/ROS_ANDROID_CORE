@@ -14,12 +14,15 @@ import com.wowwee.bluetoothrobotcontrollib.MipRobotSound;
 import com.wowwee.bluetoothrobotcontrollib.sdk.MipRobot.MipRobotInterface;
 import com.wowwee.mipsample.R;
 
+import android.Manifest;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.support.v4.app.FragmentActivity;
@@ -33,7 +36,9 @@ import android.widget.TextView;
 public class MainMenuActivity extends FragmentActivity implements MipRobotInterface{
 
 	private BluetoothAdapter mBluetoothAdapter;
-	
+	private static final int REQUEST_CODE_LOCATION_PERMISSION = 42;
+
+
 	@Override
 	protected void onCreate(Bundle arg0) {
 		super.onCreate(arg0);
@@ -48,6 +53,28 @@ public class MainMenuActivity extends FragmentActivity implements MipRobotInterf
 		// Set Context to MipRobotFinder
 		MipRobotFinder finder = MipRobotFinder.getInstance();
 		finder.setApplicationContext(getApplicationContext());
+
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+			int hasLocationPermission = checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION);
+			if (hasLocationPermission != PackageManager.PERMISSION_GRANTED) {
+				Log.e("Sphero", "Location permission has not already been granted");
+				List<String> permissions = new ArrayList<String>();
+				permissions.add(Manifest.permission.ACCESS_COARSE_LOCATION);
+				requestPermissions(permissions.toArray(new String[permissions.size()]), REQUEST_CODE_LOCATION_PERMISSION);
+			} else {
+				Log.d("Sphero", "Location permission already granted");
+			}
+		}
+	}
+
+	@Override
+	protected void onStart() {
+		super.onStart();
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+			if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+				return;
+			}
+		}
 	}
 	
 	@Override
